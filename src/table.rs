@@ -8,7 +8,11 @@ impl TableBuilder {
         Self { header: Vec::new() }
     }
 
-    pub fn group(mut self, name: &str, f: impl Fn(TableBuilder) -> TableBuilder) -> TableBuilder {
+    pub fn group(
+        mut self,
+        name: &str,
+        mut f: impl Fn(TableBuilder) -> TableBuilder,
+    ) -> TableBuilder {
         self.header.push(Entry::Group(Group {
             name: name.to_string(),
             entries: f(TableBuilder::new()).header,
