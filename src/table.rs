@@ -24,14 +24,17 @@ impl TableBuilder {
     }
 
     pub fn build(self) -> Table {
-        let mut header = Vec::new();
+        let mut header_lines = Vec::new();
 
         let depth = depth(&self.header);
-        header.resize_with(depth, Default::default);
-        process(&self.header, depth, &mut header);
+        header_lines.resize_with(depth, Default::default);
+        fill_header_lines(&self.header, depth, &mut header_lines);
+        header_lines
+            .iter_mut()
+            .for_each(|x| *x = x.trim_end().to_string());
 
         Table {
-            header,
+            header_lines,
             fields: collect_fields(self.header),
         }
     }
@@ -59,38 +62,58 @@ fn depth(entries: &Vec<Entry>) -> usize {
         .unwrap_or(0)
 }
 
-fn process(entries: &Vec<Entry>, depth: usize, mut lines: &mut Vec<String>) -> usize {
-    dbg!(entries);
+fn fill_header_lines(entries: &Vec<Entry>, depth: usize, mut lines: &mut Vec<String>) -> usize {
     let mut len = 0;
-    for entry in entries {
+    let mut it = entries.iter().peekable();
+    while let Some(entry) = it.next() {
         match entry {
             Entry::Group(group) => {
                 let i = lines.len() - depth;
-                lines[i].push_str(" ");
-                lines[i].push_str(&group.name);
-                lines[i].push_str(" ");
-                len += process(&group.entries, depth - 1, &mut lines);
+                let child_len = fill_header_lines(&group.entries, depth - 1, &mut lines);
+                if child_len > group.name.len() {
+                    let extra_space_to_insert = child_len - group.name.len();
+                    for _ in 0..((extra_space_to_insert) / 2) {
+                        lines[i].push(' ');
+                    }
+                    lines[i].push_str(&group.name);
+                    for _ in 0..((extra_space_to_insert + 1) / 2) {
+                        lines[i].push(' ');
+                    }
+                    len += child_len;
+                } else {
+                    lines[i].push_str(&group.name);
+                    len += group.name.len();
+                }
+
+                // Join groups with " | "
+                if depth != 1 && it.peek().is_some() {
+                    for j in i..lines.len() {
+                        lines[j].push_str(&" | ");
+                    }
+                    len += 3;
+                }
             }
             Entry::Field(field) => {
                 if depth == 1 {
-                    lines.last_mut().unwrap().push_str(" ");
                     lines.last_mut().unwrap().push_str(&field.name);
-                    lines.last_mut().unwrap().push_str(" ");
-                    len += field.name.len() + 2;
+                    len += field.name.len();
                 } else {
-                    len += process(&vec![entry.clone()], depth - 1, &mut lines);
+                    len += fill_header_lines(&vec![entry.clone()], depth - 1, &mut lines);
                 }
             }
+        }
+        // Join terminal fields with " "
+        if depth == 1 && it.peek().is_some() {
+            lines.last_mut().unwrap().push(' ');
+            len += 1;
         }
     }
     len
 }
 
 pub struct Table {
-    header: Vec<String>,
+    header_lines: Vec<String>,
     fields: Vec<Field>,
-    // groups: Vec<Vec<String>>,
-    // fields: Vec<Field>,
     // last_values: Vec<Value>
 }
 
@@ -117,7 +140,7 @@ type Value = i64;
 // positional?
 impl Table {
     pub fn header(&self) -> String {
-        self.header.join("\n")
+        self.header_lines.join("\n")
     }
 
     pub fn display_row(&self, values: Vec<Value>) -> String {
@@ -129,7 +152,7 @@ impl Table {
 mod tests {
     use super::*;
     #[test]
-    fn composite_header() {
+    fn header_simple() {
         let table = TableBuilder::new()
             .group("input", |input| input.field("counter").field("counter2"))
             .build();
@@ -137,22 +160,27 @@ mod tests {
             table.header(),
             [
                 //
-                " input ",
-                " counter  counter2 ",
-                //"----------------"
+                "     input",
+                "counter counter2",
             ]
             .join("\n")
         );
     }
 
-    // #[test]
-    // fn multiple_header() {
-    //     unsafe {
-    //         metrics::clear_recorder();
-    //     }
-    //     let register = CliRegister::install_on_thread();
-    //     counter!("input.counter", 10);
-    //     counter!("input.rate", 42);
-    //     assert_eq!(register.header(), ["input", "counter rate"].join("\n"));
-    // }
+    #[test]
+    fn header_with_multiple_groups() {
+        let table = TableBuilder::new()
+            .group("g1", |input| input.field("c1").field("c2"))
+            .group("g2", |input| input.field("c3").field("c4"))
+            .build();
+        assert_eq!(
+            table.header(),
+            [
+                //
+                " g1   |  g2",
+                "c1 c2 | c3 c4",
+            ]
+            .join("\n")
+        );
+    }
 }
