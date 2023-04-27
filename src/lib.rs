@@ -92,6 +92,7 @@ fn build(mut builder: TableBuilder, components: &Vec<Vec<&str>>) -> TableBuilder
         let name = component[0];
         if component.len() == 1 {
             builder = builder.field(name);
+            i = i + 1;
         } else {
             // make group, take out all items which share prefix
             let subset = components
@@ -100,8 +101,8 @@ fn build(mut builder: TableBuilder, components: &Vec<Vec<&str>>) -> TableBuilder
                 .filter_map(|(first, rest)| (first == &name).then(|| rest.to_vec()))
                 .collect();
             builder = builder.group(name, |group_builder| build(group_builder, &subset));
+            i = i + subset.len();
         }
-        i = i + 1;
     }
     builder
 }
@@ -121,6 +122,17 @@ mod tests {
         counter!("val_a", 10);
         counter!("val_b", 20);
         assert_eq!(register.header(), ["val_a val_b"].join("\n"));
+    }
+
+    #[test]
+    fn composite_header() {
+        unsafe {
+            metrics::clear_recorder();
+        }
+        let register = CliRegister::install_on_thread();
+        counter!("g1.val_a", 10);
+        counter!("g1.val_b", 20);
+        assert_eq!(register.header(), ["    g1", "val_a val_b"].join("\n"));
     }
 
     #[test]
