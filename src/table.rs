@@ -1,11 +1,22 @@
 #[derive(Debug)]
 pub struct TableBuilder {
+    path: Vec<String>,
     header: Vec<Entry>,
 }
 
 impl TableBuilder {
     pub fn new() -> Self {
-        Self { header: Vec::new() }
+        Self {
+            header: Vec::new(),
+            path: Vec::new(),
+        }
+    }
+
+    fn new_subsection(path: Vec<String>) -> Self {
+        Self {
+            header: Vec::new(),
+            path,
+        }
     }
 
     pub fn group(
@@ -13,16 +24,21 @@ impl TableBuilder {
         name: &str,
         mut f: impl Fn(TableBuilder) -> TableBuilder,
     ) -> TableBuilder {
+        let mut path = self.path.clone();
+        path.push(name.to_string());
         self.header.push(Entry::Group(Group {
             name: name.to_string(),
-            entries: f(TableBuilder::new()).header,
+            entries: f(TableBuilder::new_subsection(path)).header,
         }));
         self
     }
 
     pub fn field(mut self, name: &str) -> TableBuilder {
+        let mut full_path = self.path.clone();
+        full_path.push(name.to_string());
         self.header.push(Entry::Field(Field {
             name: name.to_string(),
+            full_path,
         }));
         self
     }
@@ -136,6 +152,7 @@ struct Group {
 #[derive(Clone, Debug)]
 struct Field {
     name: String,
+    full_path: Vec<String>,
     // len: usize,
 }
 
@@ -147,6 +164,13 @@ impl Table {
         self.header_lines.join("\n")
     }
 
+    // Given a list of path components, with the last one being the field and
+    // the first ones the gorups, return the entry position in the table, if found.
+    pub fn position_of(&self, path: Vec<String>) -> Option<usize> {
+        self.fields.iter().position(|field| field.full_path == path)
+    }
+
+    // Each entry gets an associated index at build time, field should be supplied in order
     pub fn display_row(&self, values: Vec<Value>) -> String {
         todo!();
     }
@@ -155,13 +179,17 @@ impl Table {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn table_a() -> Table {
+        TableBuilder::new()
+            .group("input", |input| input.field("counter").field("counter2"))
+            .build()
+    }
+
     #[test]
     fn header_simple() {
-        let table = TableBuilder::new()
-            .group("input", |input| input.field("counter").field("counter2"))
-            .build();
         assert_eq!(
-            table.header(),
+            table_a().header(),
             [
                 //
                 "     input",
@@ -172,19 +200,52 @@ mod tests {
     }
 
     #[test]
-    fn header_with_multiple_groups() {
-        let table = TableBuilder::new()
+    fn index_simple() {
+        let table = table_a();
+        assert_eq!(
+            table.position_of(vec!["input".to_string(), "counter".to_string()]),
+            Some(0)
+        );
+        assert_eq!(
+            table.position_of(vec!["input".to_string(), "counter2".to_string()]),
+            Some(1)
+        );
+        assert_eq!(
+            table.position_of(vec!["input".to_string(), "counter3".to_string()]),
+            None
+        );
+    }
+
+    fn table_b() -> Table {
+        TableBuilder::new()
             .group("g1", |input| input.field("c1").field("c2"))
             .group("g2", |input| input.field("c3").field("c4"))
-            .build();
+            .build()
+    }
+
+    #[test]
+    fn header_with_multiple_groups() {
         assert_eq!(
-            table.header(),
+            table_b().header(),
             [
                 //
                 " g1   |  g2",
                 "c1 c2 | c3 c4",
             ]
             .join("\n")
+        );
+    }
+
+    #[test]
+    fn index_with_multiple_groups() {
+        let table = table_b();
+        assert_eq!(
+            table.position_of(vec!["g1".to_string(), "c2".to_string()]),
+            Some(1)
+        );
+        assert_eq!(
+            table.position_of(vec!["g2".to_string(), "c3".to_string()]),
+            Some(2)
         );
     }
 }
