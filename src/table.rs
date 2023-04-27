@@ -19,11 +19,7 @@ impl TableBuilder {
         }
     }
 
-    pub fn group(
-        mut self,
-        name: &str,
-        mut f: impl Fn(TableBuilder) -> TableBuilder,
-    ) -> TableBuilder {
+    pub fn group(mut self, name: &str, f: impl Fn(TableBuilder) -> TableBuilder) -> TableBuilder {
         let mut path = self.path.clone();
         path.push(name.to_string());
         self.header.push(Entry::Group(Group {
@@ -39,6 +35,11 @@ impl TableBuilder {
         self.header.push(Entry::Field(Field {
             name: name.to_string(),
             full_path,
+            display: DisplayInfo {
+                len: name.len(),
+                display_kind: DisplayKind::Number,
+            },
+            _last_value: Default::default(),
         }));
         self
     }
@@ -76,7 +77,7 @@ fn depth(entries: &Vec<Entry>) -> usize {
         .iter()
         .map(|entry| match entry {
             Entry::Group(group) => depth(&group.entries) + 1,
-            Entry::Field(field) => 1,
+            Entry::Field(_) => 1,
         })
         .max()
         .unwrap_or(0)
@@ -90,20 +91,7 @@ fn fill_header_lines(entries: &Vec<Entry>, depth: usize, mut lines: &mut Vec<Str
             Entry::Group(group) => {
                 let i = lines.len() - depth;
                 let child_len = fill_header_lines(&group.entries, depth - 1, &mut lines);
-                if child_len > group.name.len() {
-                    let extra_space_to_insert = child_len - group.name.len();
-                    for _ in 0..((extra_space_to_insert) / 2) {
-                        lines[i].push(' ');
-                    }
-                    lines[i].push_str(&group.name);
-                    for _ in 0..((extra_space_to_insert + 1) / 2) {
-                        lines[i].push(' ');
-                    }
-                    len += child_len;
-                } else {
-                    lines[i].push_str(&group.name);
-                    len += group.name.len();
-                }
+                len += add_centered_str(&mut lines[i], &group.name, child_len);
 
                 // Join groups with " | "
                 if depth != 1 && it.peek().is_some() {
@@ -116,7 +104,7 @@ fn fill_header_lines(entries: &Vec<Entry>, depth: usize, mut lines: &mut Vec<Str
             Entry::Field(field) => {
                 if depth == 1 {
                     lines.last_mut().unwrap().push_str(&field.name);
-                    len += field.name.len();
+                    len += field.display.len;
                 } else {
                     len += fill_header_lines(&vec![entry.clone()], depth - 1, &mut lines);
                 }
@@ -129,6 +117,26 @@ fn fill_header_lines(entries: &Vec<Entry>, depth: usize, mut lines: &mut Vec<Str
         }
     }
     len
+}
+
+/// Append value to output, making sure it takes at least minimum_len characters.
+/// Return the number of added characters. If minimum_len is bigger than value.len(),
+/// text will be centered.
+fn add_centered_str(output: &mut String, value: &str, minimum_len: usize) -> usize {
+    let initial_len = output.len();
+    if minimum_len > value.len() {
+        let extra_space_to_insert = minimum_len - value.len();
+        for _ in 0..((extra_space_to_insert) / 2) {
+            output.push(' ');
+        }
+        output.push_str(value);
+        for _ in 0..((extra_space_to_insert + 1) / 2) {
+            output.push(' ');
+        }
+    } else {
+        output.push_str(value);
+    }
+    output.len() - initial_len
 }
 
 pub struct Table {
@@ -153,7 +161,24 @@ struct Group {
 struct Field {
     name: String,
     full_path: Vec<String>,
-    // len: usize,
+    display: DisplayInfo,
+    // TODO:
+    _last_value: Value,
+}
+
+#[derive(Clone, Debug)]
+struct DisplayInfo {
+    /// How much space the field should take
+    len: usize,
+    display_kind: DisplayKind,
+}
+
+#[derive(Clone, Debug)]
+enum DisplayKind {
+    Number,
+    // TODO:
+    _Difference,
+    _Histogram,
 }
 
 type Value = i64;
@@ -172,7 +197,25 @@ impl Table {
 
     // Each entry gets an associated index at build time, field should be supplied in order
     pub fn display_row(&self, values: Vec<Value>) -> String {
-        todo!();
+        let mut output = String::new();
+        for (value, field) in values.iter().zip(&self.fields) {
+            match field.display.display_kind {
+                DisplayKind::Number => {
+                    let v = value.to_string();
+                    if field.display.len > v.len() {
+                        for _ in 0..(field.display.len - v.len()) {
+                            output.push(' ')
+                        }
+                        output.push_str(&v);
+                    }
+                }
+                DisplayKind::_Difference => todo!(),
+                DisplayKind::_Histogram => todo!(),
+            }
+            output.push(' ');
+        }
+        output.pop();
+        output
     }
 }
 
@@ -214,6 +257,12 @@ mod tests {
             table.position_of(vec!["input".to_string(), "counter3".to_string()]),
             None
         );
+    }
+
+    #[test]
+    fn value_simple() {
+        let table = table_a();
+        assert_eq!(&table.display_row(vec![2, 324]), "      2      324",);
     }
 
     fn table_b() -> Table {
