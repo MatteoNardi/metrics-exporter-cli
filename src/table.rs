@@ -21,7 +21,11 @@ impl TableBuilder {
         }
     }
 
-    pub fn group(mut self, name: &str, f: impl Fn(TableBuilder) -> TableBuilder) -> TableBuilder {
+    pub fn group(
+        mut self,
+        name: &str,
+        mut f: impl FnMut(TableBuilder) -> TableBuilder,
+    ) -> TableBuilder {
         let mut path = self.path.clone();
         path.push(name.to_string());
         self.header.push(Entry::Group(Group {

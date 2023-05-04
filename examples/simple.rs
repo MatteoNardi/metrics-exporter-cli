@@ -4,7 +4,7 @@ use metrics::counter;
 use metrics_exporter_cli::CliRegister;
 
 fn main() {
-    let register = CliRegister::install().expect("Error installing register");
+    let mut register = CliRegister::install().expect("Error installing register");
     std::thread::spawn(|| {
         let mut iterations = 0;
         counter!("group2", 42);

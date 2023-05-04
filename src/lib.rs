@@ -1,11 +1,12 @@
 mod table;
 
-use metrics::SetRecorderError;
+use metrics::{SetRecorderError, Unit};
 use metrics_util::debugging::{DebugValue, DebuggingRecorder, Snapshot, Snapshotter};
 use table::{DisplayKind, Table, TableBuilder, Value};
 
 pub struct CliRegister {
     snapshotter: SnapshotterKind,
+    table: Table,
 }
 
 enum SnapshotterKind {
@@ -20,6 +21,7 @@ impl CliRegister {
         recorder.install()?;
         Ok(Self {
             snapshotter: SnapshotterKind::Snapshotter(snapshotter),
+            table: TableBuilder::new().build(),
         })
     }
 
@@ -28,23 +30,27 @@ impl CliRegister {
         _ = recorder.install();
         Self {
             snapshotter: SnapshotterKind::PerThread,
+            table: TableBuilder::new().build(),
         }
     }
 
     fn snapshot(&self) -> Snapshot {
         match &self.snapshotter {
             SnapshotterKind::Snapshotter(snapshotter) => snapshotter.snapshot(),
-            SnapshotterKind::PerThread => Snapshotter::current_thread_snapshot().unwrap(),
+            SnapshotterKind::PerThread => {
+                Snapshotter::current_thread_snapshot().expect("No current thread snapshot")
+            }
         }
     }
 
-    pub fn header(&self) -> String {
-        table_from_snapshot(self.snapshot()).header()
+    pub fn header(&mut self) -> String {
+        // Recompute table header
+        self.table = table_from_snapshot(self.snapshot());
+        self.table.header()
     }
 
-    pub fn status(&self) -> String {
+    pub fn status(&mut self) -> String {
         let snapshot = self.snapshot();
-        let mut table = table_from_snapshot(self.snapshot());
         let mut items: Vec<(Option<usize>, DebugValue)> = snapshot
             .into_vec()
             .into_iter()
@@ -57,7 +63,7 @@ impl CliRegister {
                     .split('.')
                     .map(|x| x.to_string())
                     .collect::<Vec<String>>();
-                let i = table.position_of(path);
+                let i = self.table.position_of(path);
                 (i, item.3)
             })
             .collect();
@@ -70,38 +76,59 @@ impl CliRegister {
                 DebugValue::Histogram(_) => todo!(),
             })
             .collect();
-        table.display_row(values)
+        self.table.display_row(values)
     }
 }
 
 fn table_from_snapshot(snapshot: Snapshot) -> Table {
-    let mut keys: Vec<String> = snapshot
+    let mut components: Vec<Component> = snapshot
         .into_vec()
         .into_iter()
-        .map(|x| x.0.key().name().to_string())
+        .map(|x| Component {
+            path: x
+                .0
+                .key()
+                .name()
+                .to_string()
+                .split(".")
+                .map(|x| x.to_string())
+                .collect(),
+            unit: x.1.unwrap_or(Unit::Count),
+        })
         .collect();
-    keys.sort();
-    let components: Vec<Vec<&str>> = keys.iter().map(|key| key.split('.').collect()).collect();
-    build(TableBuilder::new(), &components).build()
+    // TODO: remove clone
+    components.sort_by_key(|x| x.path.clone());
+    build(TableBuilder::new(), &mut components[..], 0).build()
 }
 
-fn build(mut builder: TableBuilder, components: &Vec<Vec<&str>>) -> TableBuilder {
+struct Component {
+    path: Vec<String>,
+    unit: Unit,
+}
+
+fn build(mut builder: TableBuilder, components: &mut [Component], depth: usize) -> TableBuilder {
     let mut i = 0;
     while i < components.len() {
-        let component = &components[i];
-        let name = component[0];
-        if component.len() == 1 {
-            builder = builder.field(name, DisplayKind::Number);
+        let name = components[i].path[depth].clone();
+        if components[i].path.len() == depth + 1 {
+            let display_kind = match components[i].unit {
+                Unit::TerabitsPerSecond
+                | Unit::GigabitsPerSecond
+                | Unit::MegabitsPerSecond
+                | Unit::KilobitsPerSecond
+                | Unit::BitsPerSecond
+                | Unit::CountPerSecond => DisplayKind::Difference,
+                _ => DisplayKind::Number,
+            };
+            builder = builder.field(&name, display_kind);
             i = i + 1;
         } else {
             // make group, take out all items which share prefix
-            let subset = components
-                .iter()
-                .filter_map(|c| c.split_first())
-                .filter_map(|(first, rest)| (first == &name).then(|| rest.to_vec()))
-                .collect();
-            builder = builder.group(name, |group_builder| build(group_builder, &subset));
-            i = i + subset.len();
+            let group_size = components.iter().filter(|c| c.path[depth] == name).count();
+            builder = builder.group(&name, |group_builder| {
+                build(group_builder, &mut components[i..i + group_size], depth + 1)
+            });
+            i = i + group_size;
         }
     }
     builder
@@ -109,7 +136,7 @@ fn build(mut builder: TableBuilder, components: &Vec<Vec<&str>>) -> TableBuilder
 
 #[cfg(test)]
 mod tests {
-    use metrics::counter;
+    use metrics::{counter, describe_counter, register_counter};
 
     use super::*;
 
@@ -118,7 +145,8 @@ mod tests {
         unsafe {
             metrics::clear_recorder();
         }
-        let register = CliRegister::install_on_thread();
+        // TODO: do we want internal mutability?
+        let mut register = CliRegister::install_on_thread();
         counter!("val_a", 10);
         counter!("val_b", 20);
         assert_eq!(register.header(), ["val_a val_b"].join("\n"));
@@ -129,7 +157,7 @@ mod tests {
         unsafe {
             metrics::clear_recorder();
         }
-        let register = CliRegister::install_on_thread();
+        let mut register = CliRegister::install_on_thread();
         counter!("g1.val_a", 10);
         counter!("g1.val_b", 20);
         assert_eq!(register.header(), ["    g1", "val_a val_b"].join("\n"));
@@ -140,9 +168,25 @@ mod tests {
         unsafe {
             metrics::clear_recorder();
         }
-        let register = CliRegister::install_on_thread();
+        let mut register = CliRegister::install_on_thread();
         counter!("val_a", 10);
         counter!("val_b", 20);
+        _ = register.header(); // TODO: this easy to misuse
         assert_eq!(register.status(), ["   10    20"].join("\n"));
+    }
+
+    #[test]
+    fn simple_difference() {
+        unsafe {
+            metrics::clear_recorder();
+        }
+        let mut register = CliRegister::install_on_thread();
+        register_counter!("val_a");
+        describe_counter!("val_a", Unit::CountPerSecond, "Val A");
+        counter!("val_a", 10);
+        _ = register.header(); // TODO: this easy to misuse
+        assert_eq!(register.status(), ["   10"].join("\n"));
+        counter!("val_a", 22);
+        assert_eq!(register.status(), ["   22"].join("\n"));
     }
 }
