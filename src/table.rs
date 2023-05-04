@@ -56,9 +56,12 @@ impl TableBuilder {
             .iter_mut()
             .for_each(|x| *x = x.trim_end().to_string());
 
+        let mut fields = collect_fields(self.header);
+        add_padding(&mut fields);
+
         Table {
             header_lines,
-            fields: collect_fields(self.header),
+            fields,
         }
     }
 }
@@ -72,6 +75,21 @@ fn collect_fields(entries: Vec<Entry>) -> Vec<Field> {
         }
     }
     result
+}
+
+// Add to fields padding for the separator
+fn add_padding(fields: &mut Vec<Field>) {
+    for i in 1..fields.len() {
+        let path1 = &fields[i - 1].full_path;
+        let path2 = &fields[i].full_path;
+        if path1.len() >= 2 || path2.len() >= 2 {
+            let group1 = &path1[0..path1.len() - 1];
+            let group2 = &path2[0..path2.len() - 1];
+            if group1 != group2 {
+                fields[i].display.len += 2;
+            }
+        }
+    }
 }
 
 fn depth(entries: &Vec<Entry>) -> usize {
@@ -189,6 +207,18 @@ pub enum Value {
     F64(f64),
 }
 
+impl From<i64> for Value {
+    fn from(value: i64) -> Self {
+        Self::Int(value)
+    }
+}
+
+impl From<f64> for Value {
+    fn from(value: f64) -> Self {
+        Self::F64(value)
+    }
+}
+
 impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -211,12 +241,15 @@ impl Table {
     }
 
     // Each entry gets an associated index at build time, field should be supplied in order
-    pub fn display_row(&self, values: Vec<Value>) -> String {
+    pub fn display_row<T>(&self, values: Vec<T>) -> String
+    where
+        T: Into<Value>,
+    {
         let mut output = String::new();
-        for (value, field) in values.iter().zip(&self.fields) {
+        for (value, field) in values.into_iter().zip(&self.fields) {
             match field.display.display_kind {
                 DisplayKind::Number => {
-                    let v = value.to_string();
+                    let v = value.into().to_string();
                     if field.display.len > v.len() {
                         for _ in 0..(field.display.len - v.len()) {
                             output.push(' ')
@@ -311,5 +344,11 @@ mod tests {
             table.position_of(vec!["g2".to_string(), "c3".to_string()]),
             Some(2)
         );
+    }
+
+    #[test]
+    fn value_with_multiple_groups() {
+        let table = table_b();
+        assert_eq!(&table.display_row(vec![1, 2, 3, 4]), " 1  2    3  4");
     }
 }
