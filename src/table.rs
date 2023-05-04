@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 #[derive(Debug)]
 pub struct TableBuilder {
     path: Vec<String>,
@@ -39,7 +41,7 @@ impl TableBuilder {
                 len: name.len(),
                 display_kind: DisplayKind::Number,
             },
-            _last_value: Default::default(),
+            _last_value: Value::Int(0),
         }));
         self
     }
@@ -181,7 +183,20 @@ enum DisplayKind {
     _Histogram,
 }
 
-type Value = i64;
+#[derive(Clone, Debug)]
+pub enum Value {
+    Int(i64),
+    F64(f64),
+}
+
+impl Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::Int(x) => write!(f, "{}", x),
+            Value::F64(x) => write!(f, "{}", x),
+        }
+    }
+}
 
 // positional?
 impl Table {

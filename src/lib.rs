@@ -2,7 +2,7 @@ mod table;
 
 use metrics::SetRecorderError;
 use metrics_util::debugging::{DebugValue, DebuggingRecorder, Snapshot, Snapshotter};
-use table::{Table, TableBuilder};
+use table::{Table, TableBuilder, Value};
 
 pub struct CliRegister {
     snapshotter: SnapshotterKind,
@@ -65,8 +65,8 @@ impl CliRegister {
         let values = items
             .into_iter()
             .map(|(_, value)| match value {
-                DebugValue::Counter(x) => x as i64,
-                DebugValue::Gauge(_) => todo!(),
+                DebugValue::Counter(x) => Value::Int(x as i64),
+                DebugValue::Gauge(x) => Value::F64(*x),
                 DebugValue::Histogram(_) => todo!(),
             })
             .collect();
