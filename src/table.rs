@@ -31,7 +31,7 @@ impl TableBuilder {
         self
     }
 
-    pub fn field(mut self, name: &str) -> TableBuilder {
+    pub fn field(mut self, name: &str, display_kind: DisplayKind) -> TableBuilder {
         let mut full_path = self.path.clone();
         full_path.push(name.to_string());
         self.header.push(Entry::Field(Field {
@@ -39,9 +39,9 @@ impl TableBuilder {
             full_path,
             display: DisplayInfo {
                 len: name.len(),
-                display_kind: DisplayKind::Number,
+                display_kind,
             },
-            _last_value: Value::Int(0),
+            last_value: Value::Int(0),
         }));
         self
     }
@@ -182,8 +182,7 @@ struct Field {
     name: String,
     full_path: Vec<String>,
     display: DisplayInfo,
-    // TODO:
-    _last_value: Value,
+    last_value: Value,
 }
 
 #[derive(Clone, Debug)]
@@ -194,10 +193,10 @@ struct DisplayInfo {
 }
 
 #[derive(Clone, Debug)]
-enum DisplayKind {
+pub enum DisplayKind {
     Number,
+    Difference,
     // TODO:
-    _Difference,
     _Histogram,
 }
 
@@ -241,23 +240,24 @@ impl Table {
     }
 
     // Each entry gets an associated index at build time, field should be supplied in order
-    pub fn display_row<T>(&self, values: Vec<T>) -> String
+    pub fn display_row<T>(&mut self, values: Vec<T>) -> String
     where
         T: Into<Value>,
     {
         let mut output = String::new();
-        for (value, field) in values.into_iter().zip(&self.fields) {
+        for (value, mut field) in values.into_iter().zip(&mut self.fields) {
+            let value = value.into();
             match field.display.display_kind {
-                DisplayKind::Number => {
-                    let v = value.into().to_string();
-                    if field.display.len > v.len() {
-                        for _ in 0..(field.display.len - v.len()) {
-                            output.push(' ')
-                        }
-                        output.push_str(&v);
-                    }
+                DisplayKind::Number => display_field(&mut output, field, value),
+                DisplayKind::Difference => {
+                    let difference = match (&field.last_value, &value) {
+                        (Value::Int(x), Value::Int(y)) => Value::Int(y - x),
+                        (Value::F64(x), Value::F64(y)) => Value::F64(y - x),
+                        (_, new_val) => new_val.clone(),
+                    };
+                    field.last_value = value;
+                    display_field(&mut output, field, difference);
                 }
-                DisplayKind::_Difference => todo!(),
                 DisplayKind::_Histogram => todo!(),
             }
             output.push(' ');
@@ -267,13 +267,27 @@ impl Table {
     }
 }
 
+fn display_field(output: &mut String, field: &Field, value: Value) {
+    let v = value.to_string();
+    if field.display.len > v.len() {
+        for _ in 0..(field.display.len - v.len()) {
+            output.push(' ')
+        }
+        output.push_str(&v);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn table_a() -> Table {
         TableBuilder::new()
-            .group("input", |input| input.field("counter").field("counter2"))
+            .group("input", |input| {
+                input
+                    .field("counter", DisplayKind::Number)
+                    .field("counter2", DisplayKind::Number)
+            })
             .build()
     }
 
@@ -309,14 +323,22 @@ mod tests {
 
     #[test]
     fn value_simple() {
-        let table = table_a();
+        let mut table = table_a();
         assert_eq!(&table.display_row(vec![2, 324]), "      2      324",);
     }
 
     fn table_b() -> Table {
         TableBuilder::new()
-            .group("g1", |input| input.field("c1").field("c2"))
-            .group("g2", |input| input.field("c3").field("c4"))
+            .group("g1", |input| {
+                input
+                    .field("c1", DisplayKind::Number)
+                    .field("c2", DisplayKind::Number)
+            })
+            .group("g2", |input| {
+                input
+                    .field("c3", DisplayKind::Number)
+                    .field("c4", DisplayKind::Number)
+            })
             .build()
     }
 
@@ -348,7 +370,16 @@ mod tests {
 
     #[test]
     fn value_with_multiple_groups() {
-        let table = table_b();
+        let mut table = table_b();
         assert_eq!(&table.display_row(vec![1, 2, 3, 4]), " 1  2    3  4");
+    }
+
+    #[test]
+    fn value_difference() {
+        let mut table = TableBuilder::new()
+            .field("c1", DisplayKind::Difference)
+            .build();
+        assert_eq!(&table.display_row(vec![1]), " 1");
+        assert_eq!(&table.display_row(vec![3]), " 2");
     }
 }

@@ -2,7 +2,7 @@ mod table;
 
 use metrics::SetRecorderError;
 use metrics_util::debugging::{DebugValue, DebuggingRecorder, Snapshot, Snapshotter};
-use table::{Table, TableBuilder, Value};
+use table::{DisplayKind, Table, TableBuilder, Value};
 
 pub struct CliRegister {
     snapshotter: SnapshotterKind,
@@ -44,7 +44,7 @@ impl CliRegister {
 
     pub fn status(&self) -> String {
         let snapshot = self.snapshot();
-        let table = table_from_snapshot(self.snapshot());
+        let mut table = table_from_snapshot(self.snapshot());
         let mut items: Vec<(Option<usize>, DebugValue)> = snapshot
             .into_vec()
             .into_iter()
@@ -91,7 +91,7 @@ fn build(mut builder: TableBuilder, components: &Vec<Vec<&str>>) -> TableBuilder
         let component = &components[i];
         let name = component[0];
         if component.len() == 1 {
-            builder = builder.field(name);
+            builder = builder.field(name, DisplayKind::Number);
             i = i + 1;
         } else {
             // make group, take out all items which share prefix
