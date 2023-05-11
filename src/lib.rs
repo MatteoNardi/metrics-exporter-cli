@@ -1,6 +1,6 @@
 mod table;
 
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
 use metrics::{SetRecorderError, Unit};
 use metrics_util::debugging::{DebugValue, DebuggingRecorder, Snapshot, Snapshotter};
@@ -110,6 +110,12 @@ fn table_from_snapshot(snapshot: Snapshot) -> Table {
                 .map(|x| x.to_string())
                 .collect(),
             unit: x.1.unwrap_or(Unit::Count),
+            labels: x
+                .0
+                .key()
+                .labels()
+                .map(|label| (label.key().to_string(), label.value().to_string()))
+                .collect(),
         })
         .collect();
     // TODO: remove clone
@@ -120,6 +126,7 @@ fn table_from_snapshot(snapshot: Snapshot) -> Table {
 struct Component {
     path: Vec<String>,
     unit: Unit,
+    labels: HashMap<String, String>,
 }
 
 fn build(mut builder: TableBuilder, components: &mut [Component], depth: usize) -> TableBuilder {
@@ -127,7 +134,7 @@ fn build(mut builder: TableBuilder, components: &mut [Component], depth: usize) 
     while i < components.len() {
         let name = components[i].path[depth].clone();
         if components[i].path.len() == depth + 1 {
-            let display_kind = match components[i].unit {
+            let mut display_kind = match components[i].unit {
                 Unit::TerabitsPerSecond
                 | Unit::GigabitsPerSecond
                 | Unit::MegabitsPerSecond
@@ -136,6 +143,9 @@ fn build(mut builder: TableBuilder, components: &mut [Component], depth: usize) 
                 | Unit::CountPerSecond => DisplayKind::Difference,
                 _ => DisplayKind::Number,
             };
+            if components[i].labels.get("view") == Some(&"histogram".to_string()) {
+                display_kind = DisplayKind::Histogram;
+            }
             builder = builder.field(&name, display_kind);
             i = i + 1;
         } else {

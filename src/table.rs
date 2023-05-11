@@ -43,6 +43,11 @@ impl TableBuilder {
             full_path,
             display: DisplayInfo {
                 len: name.len(),
+                align: if matches!(display_kind, DisplayKind::Histogram) {
+                    Align::Left
+                } else {
+                    Align::Right
+                },
                 display_kind,
             },
             last_value: Value::Int(0),
@@ -192,15 +197,21 @@ struct Field {
 struct DisplayInfo {
     /// How much space the field should take
     len: usize,
+    align: Align,
     display_kind: DisplayKind,
+}
+
+#[derive(Clone, Debug)]
+enum Align {
+    Right,
+    Left,
 }
 
 #[derive(Clone, Debug)]
 pub enum DisplayKind {
     Number,
     Difference,
-    // TODO:
-    _Histogram,
+    Histogram,
 }
 
 #[derive(Clone, Debug)]
@@ -251,7 +262,7 @@ impl Table {
         for (value, mut field) in values.into_iter().zip(&mut self.fields) {
             let value = value.into();
             match field.display.display_kind {
-                DisplayKind::Number => display_field(&mut output, field, value),
+                DisplayKind::Number => display_field(&mut output, field, value.to_string()),
                 DisplayKind::Difference => {
                     let difference = match (&field.last_value, &value) {
                         (Value::Int(x), Value::Int(y)) => Value::Int(y - x),
@@ -259,9 +270,18 @@ impl Table {
                         (_, new_val) => new_val.clone(),
                     };
                     field.last_value = value;
-                    display_field(&mut output, field, difference);
+                    display_field(&mut output, field, difference.to_string());
                 }
-                DisplayKind::_Histogram => todo!(),
+                DisplayKind::Histogram => {
+                    display_field(
+                        &mut output,
+                        field,
+                        "#".repeat(match value {
+                            Value::Int(x) => x as usize,
+                            Value::F64(x) => x as usize,
+                        }),
+                    );
+                }
             }
             output.push(' ');
         }
@@ -272,8 +292,7 @@ impl Table {
 
 const AUTOMATIC_GROWTH_MARGIN: usize = 1;
 
-fn display_field(output: &mut String, field: &mut Field, value: Value) {
-    let v = value.to_string();
+fn display_field(output: &mut String, field: &mut Field, v: String) {
     if field.display.len < v.len() {
         // When a table cell is asked to display a value too big for it's allocated space
         // (field.display.len), we'll automatically enlarge that cell to make it fit that
@@ -283,10 +302,15 @@ fn display_field(output: &mut String, field: &mut Field, value: Value) {
         // - we add an extra AUTOMATIC_GROWTH_MARGIN space
         field.display.len = v.len() + AUTOMATIC_GROWTH_MARGIN;
     }
+    if matches!(field.display.align, Align::Left) {
+        output.push_str(&v);
+    }
     for _ in 0..(field.display.len - v.len()) {
         output.push(' ')
     }
-    output.push_str(&v);
+    if matches!(field.display.align, Align::Right) {
+        output.push_str(&v);
+    }
 }
 
 #[cfg(test)]
@@ -414,5 +438,16 @@ mod tests {
             .build();
         assert_eq!(&table.display_row(vec![1]), " 1");
         assert_eq!(&table.display_row(vec![3]), " 2");
+    }
+
+    #[test]
+    fn value_histogram() {
+        let mut table = TableBuilder::new()
+            .field("c1", DisplayKind::Histogram)
+            .build();
+        assert_eq!(&table.display_row(vec![1]), "# ");
+        assert_eq!(&table.display_row(vec![3]), "### ");
+        assert_eq!(&table.display_row(vec![1]), "#   ");
+        assert_eq!(&table.display_row(vec![4]), "####");
     }
 }
