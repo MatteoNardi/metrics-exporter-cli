@@ -2,23 +2,12 @@ use std::fmt::Display;
 
 #[derive(Debug)]
 pub struct TableBuilder {
-    path: Vec<String>,
     header: Vec<Entry>,
 }
 
 impl TableBuilder {
     pub fn new() -> Self {
-        Self {
-            header: Vec::new(),
-            path: Vec::new(),
-        }
-    }
-
-    fn new_subsection(path: Vec<String>) -> Self {
-        Self {
-            header: Vec::new(),
-            path,
-        }
+        Self { header: Vec::new() }
     }
 
     pub fn group(
@@ -26,21 +15,16 @@ impl TableBuilder {
         name: &str,
         mut f: impl FnMut(TableBuilder) -> TableBuilder,
     ) -> TableBuilder {
-        let mut path = self.path.clone();
-        path.push(name.to_string());
         self.header.push(Entry::Group(Group {
             name: name.to_string(),
-            entries: f(TableBuilder::new_subsection(path)).header,
+            entries: f(TableBuilder::new()).header,
         }));
         self
     }
 
     pub fn field(mut self, name: &str, display_kind: DisplayKind) -> TableBuilder {
-        let mut full_path = self.path.clone();
-        full_path.push(name.to_string());
         self.header.push(Entry::Field(Field {
             name: name.to_string(),
-            full_path,
             display: DisplayInfo {
                 len: name.len(),
                 align: if matches!(display_kind, DisplayKind::Histogram) {
@@ -49,23 +33,28 @@ impl TableBuilder {
                     Align::Right
                 },
                 display_kind,
+                margin_left: 0,
             },
             last_value: Value::Int(0),
+            full_path: vec![],
         }));
         self
     }
 
     pub fn build(self) -> Table {
         let mut header_lines = Vec::new();
+        let mut header = self.header;
 
-        let depth = depth(&self.header);
+        let depth = depth(&header);
         header_lines.resize_with(depth, Default::default);
-        fill_header_lines(&self.header, depth, &mut header_lines);
+        force_uniform_depth(&mut header, depth);
+        compute_field_paths(&mut header, vec![]);
+        fill_header_lines(&header, depth, &mut header_lines);
         header_lines
             .iter_mut()
             .for_each(|x| *x = x.trim_end().to_string());
 
-        let mut fields = collect_fields(self.header);
+        let mut fields = collect_fields(header);
         add_padding(&mut fields);
 
         Table {
@@ -95,7 +84,7 @@ fn add_padding(fields: &mut Vec<Field>) {
             let group1 = &path1[0..path1.len() - 1];
             let group2 = &path2[0..path2.len() - 1];
             if group1 != group2 {
-                fields[i].display.len += 2;
+                fields[i].display.margin_left = 2;
             }
         }
     }
@@ -110,6 +99,42 @@ fn depth(entries: &Vec<Entry>) -> usize {
         })
         .max()
         .unwrap_or(0)
+}
+
+/// Make sure all entries have the given depth by inserting empty groups
+/// around entries.
+fn force_uniform_depth(entries: &mut Vec<Entry>, expected_depth: usize) {
+    for entry in entries.iter_mut() {
+        let entry_depth = match entry {
+            Entry::Group(group) => depth(&group.entries) + 1,
+            Entry::Field(_) => 1,
+        };
+        if entry_depth < expected_depth {
+            for _ in 0..(expected_depth - entry_depth) {
+                *entry = Entry::Group(Group {
+                    name: String::new(),
+                    entries: vec![entry.clone()],
+                });
+            }
+        }
+    }
+}
+
+/// Fill the field full_path by traversing the tree
+fn compute_field_paths(entries: &mut Vec<Entry>, path: Vec<String>) {
+    for entry in entries.iter_mut() {
+        match entry {
+            Entry::Group(group) => {
+                let mut path = path.clone();
+                path.push(group.name.clone());
+                compute_field_paths(&mut group.entries, path);
+            }
+            Entry::Field(field) => {
+                field.full_path = path.clone();
+                field.full_path.push(field.name.clone());
+            }
+        };
+    }
 }
 
 fn fill_header_lines(entries: &Vec<Entry>, depth: usize, mut lines: &mut Vec<String>) -> usize {
@@ -135,7 +160,8 @@ fn fill_header_lines(entries: &Vec<Entry>, depth: usize, mut lines: &mut Vec<Str
                     lines.last_mut().unwrap().push_str(&field.name);
                     len += field.display.len;
                 } else {
-                    len += fill_header_lines(&vec![entry.clone()], depth - 1, &mut lines);
+                    // Unreachable because of force_uniform_depth
+                    unreachable!();
                 }
             }
         }
@@ -197,6 +223,7 @@ struct Field {
 struct DisplayInfo {
     /// How much space the field should take
     len: usize,
+    margin_left: usize,
     align: Align,
     display_kind: DisplayKind,
 }
@@ -260,6 +287,9 @@ impl Table {
     {
         let mut output = String::new();
         for (value, mut field) in values.into_iter().zip(&mut self.fields) {
+            for _ in 0..field.display.margin_left {
+                output.push(' ');
+            }
             let value = value.into();
             match field.display.display_kind {
                 DisplayKind::Number => display_field(&mut output, field, value.to_string()),
@@ -422,6 +452,36 @@ mod tests {
         assert_eq!(
             table.position_of(vec!["g2".to_string(), "c3".to_string()]),
             Some(2)
+        );
+    }
+
+    #[test]
+    fn table_with_blank_spots() {
+        let mut table = TableBuilder::new()
+            .group("G1", |input| {
+                input
+                    .field("A", DisplayKind::Number)
+                    .field("B", DisplayKind::Number)
+            })
+            .field("C", DisplayKind::Number)
+            .group("G2", |input| {
+                input
+                    .field("D", DisplayKind::Number)
+                    .field("E", DisplayKind::Number)
+            })
+            .build();
+        assert_eq!(
+            table.header(),
+            [
+                //
+                "G1  |   | G2",
+                "A B | C | D E",
+            ]
+            .join("\n")
+        );
+        assert_eq!(
+            table.display_row(vec![1, 2, 3, 4, 5]),
+            ["1 2   3   4 5",].join("\n")
         );
     }
 
