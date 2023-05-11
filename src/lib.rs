@@ -1,5 +1,7 @@
 mod table;
 
+use std::time::Duration;
+
 use metrics::{SetRecorderError, Unit};
 use metrics_util::debugging::{DebugValue, DebuggingRecorder, Snapshot, Snapshotter};
 use table::{DisplayKind, Table, TableBuilder, Value};
@@ -77,6 +79,20 @@ impl CliRegister {
             })
             .collect();
         self.table.display_row(values)
+    }
+
+    /// Start an infinite loop which prints a table line every second.
+    ///
+    /// Note: you could write your own loop with a different interval, but be
+    /// aware that values with a unit type *PerSecond will just print the difference
+    /// from the last print invocation, indipendently of how much time has actually
+    /// passed.
+    pub fn print_loop(&mut self) -> ! {
+        println!("{}", self.header());
+        loop {
+            println!("{}", self.status());
+            std::thread::sleep(Duration::from_secs(1));
+        }
     }
 }
 

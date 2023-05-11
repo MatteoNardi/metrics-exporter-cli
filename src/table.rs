@@ -166,7 +166,6 @@ fn add_centered_str(output: &mut String, value: &str, minimum_len: usize) -> usi
 pub struct Table {
     header_lines: Vec<String>,
     fields: Vec<Field>,
-    // last_values: Vec<Value>
 }
 
 #[derive(Clone, Debug)]
