@@ -271,14 +271,23 @@ impl Table {
     }
 }
 
-fn display_field(output: &mut String, field: &Field, value: Value) {
+const AUTOMATIC_GROWTH_MARGIN: usize = 1;
+
+fn display_field(output: &mut String, field: &mut Field, value: Value) {
     let v = value.to_string();
-    if field.display.len > v.len() {
-        for _ in 0..(field.display.len - v.len()) {
-            output.push(' ')
-        }
-        output.push_str(&v);
+    if field.display.len < v.len() {
+        // When a table cell is asked to display a value too big for it's allocated space
+        // (field.display.len), we'll automatically enlarge that cell to make it fit that
+        // value.
+        // To prevent too many size changes:
+        // - the cell enlargement is permanent
+        // - we add an extra AUTOMATIC_GROWTH_MARGIN space
+        field.display.len = v.len() + AUTOMATIC_GROWTH_MARGIN;
     }
+    for _ in 0..(field.display.len - v.len()) {
+        output.push(' ')
+    }
+    output.push_str(&v);
 }
 
 #[cfg(test)]
@@ -329,6 +338,27 @@ mod tests {
     fn value_simple() {
         let mut table = table_a();
         assert_eq!(&table.display_row(vec![2, 324]), "      2      324",);
+    }
+
+    #[test]
+    fn value_enlargement() {
+        let mut table = table_a();
+        assert_eq!(
+            &table.display_row(vec![2, 324]), //
+            "      2      324",
+        );
+        assert_eq!(
+            &table.display_row(vec![11111111111, 324]), //
+            " 11111111111      324",
+        );
+        assert_eq!(
+            &table.display_row(vec![111111111111, 324]), //
+            "111111111111      324",
+        );
+        assert_eq!(
+            &table.display_row(vec![2, 324]), //
+            "           2      324",
+        );
     }
 
     fn table_b() -> Table {
