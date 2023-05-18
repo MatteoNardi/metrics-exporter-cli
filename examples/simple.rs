@@ -1,27 +1,31 @@
 use std::time::Duration;
 
-use metrics::{counter, describe_counter, register_counter, Unit};
+use metrics::{
+    counter, describe_counter, describe_gauge, gauge, increment_counter, register_counter,
+    register_gauge, Unit,
+};
 use metrics_exporter_cli::CliRegister;
+
+use rand::prelude::*;
 
 fn main() {
     let mut register = CliRegister::install().expect("Error installing register");
-    // TODO: split descrition to different example
-    register_counter!("group1.val_b");
-    describe_counter!("group1.val_b", Unit::CountPerSecond, "Value B of group 1");
-    register_counter!("histogram.processed", "view" => "histogram");
-    describe_counter!("histogram.processed", Unit::CountPerSecond, "");
     std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_secs(1));
         register.print_loop();
     });
 
-    let mut iterations = 0;
-    counter!("group2", 42);
+    // TODO: split descrition to different example
+    register_counter!("group1.B");
+    //describe_counter!("group1.B", Unit::CountPerSecond, "Value B of group 1");
+    //register_gauge!("histogram.processed", "view" => "histogram");
+    //describe_gauge!("histogram.processed", Unit::CountPerSecond, "");
+
+    let mut rng = thread_rng();
     loop {
-        counter!("group1.val_a", iterations * 10);
-        counter!("group1.val_b", iterations * 7);
-        counter!("histogram.processed",  (iterations % 3) * 7, "view" => "histogram");
-        iterations += 1;
+        increment_counter!("iterations");
+        //counter!("group1.A", rng.gen_range(0..5));
+        counter!("group1.B", rng.gen_range(0..10));
+        //gauge!("histogram.processed",  rng.gen_range(0.0..20.0), "view" => "histogram");
         std::thread::sleep(Duration::from_secs(1));
     }
 }

@@ -49,7 +49,7 @@ impl TableBuilder {
         header_lines.resize_with(depth, Default::default);
         force_uniform_depth(&mut header, depth);
         compute_field_paths(&mut header, vec![]);
-        fill_header_lines(&header, depth, &mut header_lines);
+        fill_header_lines(&mut header, depth, &mut header_lines);
         header_lines
             .iter_mut()
             .for_each(|x| *x = x.trim_end().to_string());
@@ -137,14 +137,31 @@ fn depth(entries: &Vec<Entry>) -> usize {
         .unwrap_or(0)
 }
 
-fn fill_header_lines(entries: &Vec<Entry>, depth: usize, mut lines: &mut Vec<String>) -> usize {
+fn fill_header_lines(entries: &mut Vec<Entry>, depth: usize, mut lines: &mut Vec<String>) -> usize {
     let mut len = 0;
-    let mut it = entries.iter().peekable();
+    let mut it = entries.iter_mut().peekable();
     while let Some(entry) = it.next() {
         match entry {
-            Entry::Group(group) => {
+            Entry::Group(ref mut group) => {
                 let i = lines.len() - depth;
-                let child_len = fill_header_lines(&group.entries, depth - 1, &mut lines);
+                let mut child_len = fill_header_lines(&mut group.entries, depth - 1, &mut lines);
+                // enlarge child to fit parent
+                while child_len < group.name.len() {
+                    for j in (i + 1)..lines.len() {
+                        lines[j].push(' ');
+                    }
+                    child_len += 1;
+                    let mut g: &mut Group = group;
+                    loop {
+                        match g.entries.last_mut().expect("empty group") {
+                            Entry::Group(ref mut group) => g = group,
+                            Entry::Field(last_field) => {
+                                last_field.display.len += 1;
+                                break;
+                            }
+                        }
+                    }
+                }
                 len += add_centered_str(&mut lines[i], &group.name, child_len);
 
                 // Join groups with " | "
@@ -276,8 +293,16 @@ impl Table {
 
     // Given a list of path components, with the last one being the field and
     // the first ones the gorups, return the entry position in the table, if found.
-    pub fn position_of(&self, path: Vec<String>) -> Option<usize> {
-        self.fields.iter().position(|field| field.full_path == path)
+    pub fn position_of(&self, mut path: Vec<String>) -> Option<usize> {
+        // ignore leading empty strings
+        let items_to_ignore = if let Some(first_field) = self.fields.first() {
+            first_field.full_path.len() - path.len()
+        } else {
+            0
+        };
+        self.fields
+            .iter()
+            .position(|field| field.full_path[items_to_ignore..] == path)
     }
 
     // Each entry gets an associated index at build time, field should be supplied in order
@@ -462,6 +487,26 @@ mod tests {
         let expected_header = [expected_l1, expected_l2].join("\n");
         assert_eq!(table.header(), expected_header);
         let actual = table.display_row(vec![1, 2, 3, 4, 5]);
+        assert_eq!(actual, expected_l3);
+    }
+
+    #[test]
+    fn table_with_large_group_label() {
+        // Make sure column headers which are smaller than their parent
+        // group, fill their space to align. In this example, "A" should
+        // take 5 spaces, like "Large"
+        // TODO: refactor fill_header_lines and align 1 with A
+        let expected_l1 = "Large |";
+        let expected_l2 = "A     | B";
+        let expected_l3 = "    1   2";
+
+        let mut table = TableBuilder::new()
+            .group("Large", |input| input.field("A", DisplayKind::Number))
+            .field("B", DisplayKind::Number)
+            .build();
+        let expected_header = [expected_l1, expected_l2].join("\n");
+        assert_eq!(table.header(), expected_header);
+        let actual = table.display_row(vec![1, 2]);
         assert_eq!(actual, expected_l3);
     }
 

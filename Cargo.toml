@@ -8,3 +8,7 @@ edition = "2021"
 [dependencies]
 metrics = "0.20.1"
 metrics-util = "0.14.0"
+
+[dev-dependencies]
+rand = "0.8.5"
+

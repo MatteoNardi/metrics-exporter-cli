@@ -65,7 +65,7 @@ impl CliRegister {
                     .split('.')
                     .map(|x| x.to_string())
                     .collect::<Vec<String>>();
-                let i = self.table.position_of(path);
+                let i = self.table.position_of(path.clone());
                 (i, item.3)
             })
             .collect();
@@ -214,5 +214,19 @@ mod tests {
         assert_eq!(register.status(), ["   10"].join("\n"));
         counter!("val_a", 22);
         assert_eq!(register.status(), ["   22"].join("\n"));
+    }
+
+    #[test]
+    fn status_preserves_order() {
+        // fields should be displayed in the header order
+        unsafe {
+            metrics::clear_recorder();
+        }
+        let mut register = CliRegister::install_on_thread();
+        register_counter!("a.val_a");
+        counter!("val_b", 20);
+        counter!("a.val_a", 10);
+        _ = register.header(); // TODO: this easy to misuse
+        assert_eq!(register.status(), ["   10      20"].join("\n"));
     }
 }
