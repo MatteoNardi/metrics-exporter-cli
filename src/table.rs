@@ -64,6 +64,42 @@ impl TableBuilder {
     }
 }
 
+/// Make sure all entries have the given depth by inserting empty groups
+/// around entries.
+fn force_uniform_depth(entries: &mut Vec<Entry>, expected_depth: usize) {
+    for entry in entries.iter_mut() {
+        let entry_depth = match entry {
+            Entry::Group(group) => depth(&group.entries) + 1,
+            Entry::Field(_) => 1,
+        };
+        if entry_depth < expected_depth {
+            for _ in 0..(expected_depth - entry_depth) {
+                *entry = Entry::Group(Group {
+                    name: String::new(),
+                    entries: vec![entry.clone()],
+                });
+            }
+        }
+    }
+}
+
+/// Fill the field full_path by traversing the tree
+fn compute_field_paths(entries: &mut Vec<Entry>, path: Vec<String>) {
+    for entry in entries.iter_mut() {
+        match entry {
+            Entry::Group(group) => {
+                let mut path = path.clone();
+                path.push(group.name.clone());
+                compute_field_paths(&mut group.entries, path);
+            }
+            Entry::Field(field) => {
+                field.full_path = path.clone();
+                field.full_path.push(field.name.clone());
+            }
+        };
+    }
+}
+
 fn collect_fields(entries: Vec<Entry>) -> Vec<Field> {
     let mut result = Vec::new();
     for entry in entries {
@@ -99,42 +135,6 @@ fn depth(entries: &Vec<Entry>) -> usize {
         })
         .max()
         .unwrap_or(0)
-}
-
-/// Make sure all entries have the given depth by inserting empty groups
-/// around entries.
-fn force_uniform_depth(entries: &mut Vec<Entry>, expected_depth: usize) {
-    for entry in entries.iter_mut() {
-        let entry_depth = match entry {
-            Entry::Group(group) => depth(&group.entries) + 1,
-            Entry::Field(_) => 1,
-        };
-        if entry_depth < expected_depth {
-            for _ in 0..(expected_depth - entry_depth) {
-                *entry = Entry::Group(Group {
-                    name: String::new(),
-                    entries: vec![entry.clone()],
-                });
-            }
-        }
-    }
-}
-
-/// Fill the field full_path by traversing the tree
-fn compute_field_paths(entries: &mut Vec<Entry>, path: Vec<String>) {
-    for entry in entries.iter_mut() {
-        match entry {
-            Entry::Group(group) => {
-                let mut path = path.clone();
-                path.push(group.name.clone());
-                compute_field_paths(&mut group.entries, path);
-            }
-            Entry::Field(field) => {
-                field.full_path = path.clone();
-                field.full_path.push(field.name.clone());
-            }
-        };
-    }
 }
 
 fn fill_header_lines(entries: &Vec<Entry>, depth: usize, mut lines: &mut Vec<String>) -> usize {
@@ -359,32 +359,21 @@ mod tests {
 
     #[test]
     fn header_simple() {
-        assert_eq!(
-            table_a().header(),
-            [
-                //
-                "     input",
-                "counter counter2",
-            ]
-            .join("\n")
-        );
+        let expected_l1 = "     input";
+        let expected_l2 = "counter counter2";
+        assert_eq!(table_a().header(), [expected_l1, expected_l2].join("\n"));
     }
 
     #[test]
     fn index_simple() {
         let table = table_a();
-        assert_eq!(
-            table.position_of(vec!["input".to_string(), "counter".to_string()]),
-            Some(0)
-        );
-        assert_eq!(
-            table.position_of(vec!["input".to_string(), "counter2".to_string()]),
-            Some(1)
-        );
-        assert_eq!(
-            table.position_of(vec!["input".to_string(), "counter3".to_string()]),
-            None
-        );
+
+        let i_counter = table.position_of(vec!["input".to_string(), "counter".to_string()]);
+        assert_eq!(i_counter, Some(0));
+        let i_counter2 = table.position_of(vec!["input".to_string(), "counter2".to_string()]);
+        assert_eq!(i_counter2, Some(1));
+        let i_counter3 = table.position_of(vec!["input".to_string(), "counter3".to_string()]);
+        assert_eq!(i_counter3, None);
     }
 
     #[test]
@@ -396,22 +385,18 @@ mod tests {
     #[test]
     fn value_enlargement() {
         let mut table = table_a();
-        assert_eq!(
-            &table.display_row(vec![2, 324]), //
-            "      2      324",
-        );
-        assert_eq!(
-            &table.display_row(vec![11111111111, 324]), //
-            " 11111111111      324",
-        );
-        assert_eq!(
-            &table.display_row(vec![111111111111, 324]), //
-            "111111111111      324",
-        );
-        assert_eq!(
-            &table.display_row(vec![2, 324]), //
-            "           2      324",
-        );
+        let actual = table.display_row(vec![2, 324]);
+        let expected = "      2      324";
+        assert_eq!(actual, expected);
+        let actual = table.display_row(vec![11111111111, 324]);
+        let expected = " 11111111111      324";
+        assert_eq!(actual, expected);
+        let actual = table.display_row(vec![111111111111, 324]);
+        let expected = "111111111111      324";
+        assert_eq!(actual, expected);
+        let actual = table.display_row(vec![2, 324]);
+        let expected = "           2      324";
+        assert_eq!(actual, expected);
     }
 
     fn table_b() -> Table {
@@ -445,18 +430,22 @@ mod tests {
     #[test]
     fn index_with_multiple_groups() {
         let table = table_b();
-        assert_eq!(
-            table.position_of(vec!["g1".to_string(), "c2".to_string()]),
-            Some(1)
-        );
-        assert_eq!(
-            table.position_of(vec!["g2".to_string(), "c3".to_string()]),
-            Some(2)
-        );
+        let actual = table.position_of(vec!["g1".to_string(), "c2".to_string()]);
+        let expected = Some(1);
+        assert_eq!(actual, expected);
+        let actual = table.position_of(vec!["g2".to_string(), "c3".to_string()]);
+        let expected = Some(2);
+        assert_eq!(actual, expected);
     }
 
     #[test]
     fn table_with_blank_spots() {
+        // Make sure group splitting keeps alignment when a column
+        // (C in this example) has no super-group:
+        let expected_l1 = "G1  |   | G2";
+        let expected_l2 = "A B | C | D E";
+        let expected_l3 = "1 2   3   4 5";
+
         let mut table = TableBuilder::new()
             .group("G1", |input| {
                 input
@@ -470,19 +459,10 @@ mod tests {
                     .field("E", DisplayKind::Number)
             })
             .build();
-        assert_eq!(
-            table.header(),
-            [
-                //
-                "G1  |   | G2",
-                "A B | C | D E",
-            ]
-            .join("\n")
-        );
-        assert_eq!(
-            table.display_row(vec![1, 2, 3, 4, 5]),
-            ["1 2   3   4 5",].join("\n")
-        );
+        let expected_header = [expected_l1, expected_l2].join("\n");
+        assert_eq!(table.header(), expected_header);
+        let actual = table.display_row(vec![1, 2, 3, 4, 5]);
+        assert_eq!(actual, expected_l3);
     }
 
     #[test]
