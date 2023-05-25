@@ -293,7 +293,7 @@ impl Table {
 
     // Given a list of path components, with the last one being the field and
     // the first ones the gorups, return the entry position in the table, if found.
-    pub fn position_of(&self, mut path: Vec<String>) -> Option<usize> {
+    pub fn position_of(&self, path: Vec<String>) -> Option<usize> {
         // ignore leading empty strings
         let items_to_ignore = if let Some(first_field) = self.fields.first() {
             first_field.full_path.len() - path.len()
